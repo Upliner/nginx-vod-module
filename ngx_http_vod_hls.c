@@ -285,7 +285,7 @@ static const ngx_http_vod_request_t hls_master_request = {
 };
 
 static const ngx_http_vod_request_t hls_index_request = {
-	REQUEST_FLAG_SINGLE_TRACK_PER_MEDIA_TYPE,
+	0,
 	PARSE_BASIC_METADATA_ONLY,
 	REQUEST_CLASS_MANIFEST,
 	ngx_http_vod_hls_handle_index_playlist,
@@ -309,7 +309,7 @@ static const ngx_http_vod_request_t hls_enc_key_request = {
 };
 
 static const ngx_http_vod_request_t hls_segment_request = {
-	REQUEST_FLAG_SINGLE_TRACK_PER_MEDIA_TYPE,
+	0,
 	PARSE_FLAG_FRAMES_ALL | PARSE_FLAG_PARSED_EXTRA_DATA,
 	REQUEST_CLASS_SEGMENT,
 	NULL,

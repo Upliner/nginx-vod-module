@@ -67,6 +67,7 @@ typedef struct {
 	// fixed
 	hls_muxer_stream_state_t* first_stream;
 	hls_muxer_stream_state_t* last_stream;
+	hls_muxer_stream_state_t* cur_stream;
 	uint32_t video_duration;
 
 	// child states
@@ -74,8 +75,8 @@ typedef struct {
 	aes_cbc_encrypt_context_t* encrypted_write_context;
 	
 	// cur sequence state
-	media_clip_filtered_t* clips_start;
-	media_clip_filtered_t* clips_end;
+	media_sequence_t* cur_seq;
+	media_sequence_t* seq_end;
 	media_clip_filtered_t* cur_clip;
 	bool_t use_discontinuity;
 

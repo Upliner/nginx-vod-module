@@ -84,6 +84,18 @@ hls_muxer_simulation_supported(
 	return TRUE;
 }
 
+bool_t next_clip(hls_muxer_state_t* state) {
+	if (state->cur_clip == state->cur_seq->filtered_clips_end)
+		return FALSE;
+	state->cur_clip++;
+	if (state->cur_clip == state->cur_seq->filtered_clips_end && state->cur_seq != state->seq_end)
+	{
+		state->cur_seq++;
+		state->cur_clip = state->cur_seq->filtered_clips;
+	}
+	return TRUE;
+}
+
 vod_status_t 
 hls_muxer_init(
 	hls_muxer_state_t* state, 
@@ -103,6 +115,9 @@ hls_muxer_init(
 	void* next_filter_context;
 	vod_status_t rc;
 	bool_t reuse_buffers;
+	media_clip_filtered_t *clip;
+	media_sequence_t *seq;
+	int total_track_count;
 
 	*simulation_supported = hls_muxer_simulation_supported(media_set, encryption_params);
 
@@ -110,9 +125,6 @@ hls_muxer_init(
 	state->cur_frame = NULL;
 	state->video_duration = 0;
 
-	state->clips_start = media_set->sequences[0].filtered_clips;
-	state->clips_end = media_set->sequences[0].filtered_clips_end;
-	state->cur_clip = media_set->sequences[0].filtered_clips + 1;
 	state->use_discontinuity = media_set->use_discontinuity;
 
 	if (encryption_params->type == HLS_ENC_AES_128)
@@ -156,7 +168,10 @@ hls_muxer_init(
 	}
 
 	// allocate the streams
-	state->first_stream = vod_alloc(request_context->pool, sizeof(*state->first_stream) * media_set->sequences[0].total_track_count);
+	total_track_count = 0;
+	for (seq = media_set->sequences; seq < media_set->sequences_end; seq++)
+		total_track_count += seq->total_track_count;
+	state->first_stream = vod_alloc(request_context->pool, sizeof(*state->first_stream) * total_track_count);
 	if (state->first_stream == NULL)
 	{
 		vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
@@ -164,131 +179,143 @@ hls_muxer_init(
 		return VOD_ALLOC_FAILED;
 	}
 
-	state->last_stream = state->first_stream + media_set->sequences[0].total_track_count;
-	
-	track = state->clips_start->first_track;
-	for (cur_stream = state->first_stream; cur_stream < state->last_stream; cur_stream++, track++)
+	state->last_stream = state->first_stream + total_track_count;
+
+	cur_stream = state->first_stream;
+	for (seq = media_set->sequences; seq < media_set->sequences_end; seq++)
 	{
-		cur_stream->segment_limit = ULLONG_MAX;
-
-		rc = mpegts_encoder_init(
-			&cur_stream->mpegts_encoder_state, 
-			&init_streams_state,
-			track,
-			request_context, 
-			&state->queue, 
-			conf->interleave_frames,
-			conf->align_frames);
-		if (rc != VOD_OK)
+		for (clip = seq->filtered_clips; clip < seq->filtered_clips_end; clip++)
 		{
-			return rc;
-		}
-
-		switch (track->media_info.media_type)
-		{
-		case MEDIA_TYPE_VIDEO:
-			if (track->media_info.duration_millis > state->video_duration)
+			for (track = clip->first_track; track < clip->last_track; cur_stream++, track++)
 			{
-				state->video_duration = track->media_info.duration_millis;
-			}
+				cur_stream->segment_limit = ULLONG_MAX;
 
-			cur_stream->buffer_state = NULL;
-			cur_stream->top_filter_context = vod_alloc(request_context->pool, sizeof(mp4_to_annexb_state_t));
-			if (cur_stream->top_filter_context == NULL)
-			{
-				vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
-					"hls_muxer_init: vod_alloc failed (2)");
-				return VOD_ALLOC_FAILED;
-			}
-
-			rc = mp4_to_annexb_init(
-				cur_stream->top_filter_context,
-				request_context,
-				encryption_params,
-				&mpegts_encoder,
-				&cur_stream->mpegts_encoder_state);
-			if (rc != VOD_OK)
-			{
-				return rc;
-			}
-
-			cur_stream->top_filter = &mp4_to_annexb;
-			break;
-
-		case MEDIA_TYPE_AUDIO:
-			if (conf->interleave_frames)
-			{
-				// frame interleaving enabled, just join several audio frames according to timestamp
-				cur_stream->buffer_state = NULL;
-
-				next_filter_context = vod_alloc(request_context->pool, sizeof(frame_joiner_t));
-				if (next_filter_context == NULL)
-				{
-					vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
-						"hls_muxer_init: vod_alloc failed (3)");
-					return VOD_ALLOC_FAILED;
-				}
-
-				frame_joiner_init(next_filter_context, &mpegts_encoder, &cur_stream->mpegts_encoder_state);
-
-				next_filter = &frame_joiner;
-			}
-			else
-			{
-				// no frame interleaving, buffer the audio until it reaches a certain size / delay from video
-				cur_stream->buffer_state = vod_alloc(request_context->pool, sizeof(buffer_filter_t));
-				if (cur_stream->buffer_state == NULL)
-				{
-					vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
-						"hls_muxer_init: vod_alloc failed (4)");
-					return VOD_ALLOC_FAILED;
-				}
-
-				rc = buffer_filter_init(
-					cur_stream->buffer_state, 
-					request_context, 
-					&mpegts_encoder, 
+				rc = mpegts_encoder_init(
 					&cur_stream->mpegts_encoder_state, 
-					conf->align_frames,
-					DEFAULT_PES_PAYLOAD_SIZE);
+					&init_streams_state,
+					track,
+					request_context, 
+					&state->queue, 
+					conf->interleave_frames,
+					conf->align_frames);
 				if (rc != VOD_OK)
 				{
 					return rc;
 				}
 
-				next_filter = &buffer_filter;
-				next_filter_context = cur_stream->buffer_state;
+				switch (track->media_info.media_type)
+				{
+				case MEDIA_TYPE_VIDEO:
+					if (track->media_info.duration_millis > state->video_duration)
+					{
+						state->video_duration = track->media_info.duration_millis;
+					}
+
+					cur_stream->buffer_state = NULL;
+					cur_stream->top_filter_context = vod_alloc(request_context->pool, sizeof(mp4_to_annexb_state_t));
+					if (cur_stream->top_filter_context == NULL)
+					{
+						vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
+							"hls_muxer_init: vod_alloc failed (2)");
+						return VOD_ALLOC_FAILED;
+					}
+
+					rc = mp4_to_annexb_init(
+						cur_stream->top_filter_context,
+						request_context,
+						encryption_params,
+						&mpegts_encoder,
+						&cur_stream->mpegts_encoder_state);
+					if (rc != VOD_OK)
+					{
+						return rc;
+					}
+
+					cur_stream->top_filter = &mp4_to_annexb;
+					break;
+
+				case MEDIA_TYPE_AUDIO:
+					if (conf->interleave_frames)
+					{
+						// frame interleaving enabled, just join several audio frames according to timestamp
+						cur_stream->buffer_state = NULL;
+
+						next_filter_context = vod_alloc(request_context->pool, sizeof(frame_joiner_t));
+						if (next_filter_context == NULL)
+						{
+							vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
+								"hls_muxer_init: vod_alloc failed (3)");
+							return VOD_ALLOC_FAILED;
+						}
+
+						frame_joiner_init(next_filter_context, &mpegts_encoder, &cur_stream->mpegts_encoder_state);
+
+						next_filter = &frame_joiner;
+					}
+					else
+					{
+						// no frame interleaving, buffer the audio until it reaches a certain size / delay from video
+						cur_stream->buffer_state = vod_alloc(request_context->pool, sizeof(buffer_filter_t));
+						if (cur_stream->buffer_state == NULL)
+						{
+							vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
+								"hls_muxer_init: vod_alloc failed (4)");
+							return VOD_ALLOC_FAILED;
+						}
+
+						rc = buffer_filter_init(
+							cur_stream->buffer_state, 
+							request_context, 
+							&mpegts_encoder, 
+							&cur_stream->mpegts_encoder_state, 
+							conf->align_frames,
+							DEFAULT_PES_PAYLOAD_SIZE);
+						if (rc != VOD_OK)
+						{
+							return rc;
+						}
+
+					next_filter = &buffer_filter;
+					next_filter_context = cur_stream->buffer_state;
+				}
+
+					cur_stream->top_filter_context = vod_alloc(request_context->pool, sizeof(adts_encoder_state_t));
+					if (cur_stream->top_filter_context == NULL)
+					{
+						vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
+							"hls_muxer_init: vod_alloc failed (5)");
+						return VOD_ALLOC_FAILED;
+					}
+
+					rc = adts_encoder_init(
+						cur_stream->top_filter_context,
+						request_context,
+						encryption_params,
+						next_filter,
+						next_filter_context);
+					if (rc != VOD_OK)
+					{
+						return rc;
+					}
+
+					cur_stream->top_filter = &adts_encoder;
+					break;
+				}
+
+				rc = hls_muxer_init_track(cur_stream, track);
+				if (rc != VOD_OK)
+				{
+					return rc;
+				}
 			}
-
-			cur_stream->top_filter_context = vod_alloc(request_context->pool, sizeof(adts_encoder_state_t));
-			if (cur_stream->top_filter_context == NULL)
-			{
-				vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
-					"hls_muxer_init: vod_alloc failed (5)");
-				return VOD_ALLOC_FAILED;
-			}
-
-			rc = adts_encoder_init(
-				cur_stream->top_filter_context,
-				request_context,
-				encryption_params,
-				next_filter,
-				next_filter_context);
-			if (rc != VOD_OK)
-			{
-				return rc;
-			}
-
-			cur_stream->top_filter = &adts_encoder;
-			break;
-		}
-
-		rc = hls_muxer_init_track(cur_stream, track);
-		if (rc != VOD_OK)
-		{
-			return rc;
 		}
 	}
+
+	state->cur_seq = media_set->sequences;
+	state->seq_end = media_set->sequences_end - 1;
+	state->cur_clip = state->cur_seq->filtered_clips;
+	state->cur_stream = state->first_stream + (state->cur_clip->last_track - state->cur_clip->first_track);
+	next_clip(state);
 
 	mpegts_encoder_finalize_streams(&init_streams_state);
 
@@ -304,19 +331,17 @@ static vod_status_t
 hls_muxer_reinit_tracks(hls_muxer_state_t* state)
 {
 	media_track_t* track;
-	hls_muxer_stream_state_t* cur_stream;
 	vod_status_t rc;
 
-	track = state->cur_clip->first_track;
-	for (cur_stream = state->first_stream; cur_stream < state->last_stream; cur_stream++, track++)
+	for (track = state->cur_clip->first_track; track < state->cur_clip->last_track;  track++, state->cur_stream++)
 	{
-		rc = hls_muxer_init_track(cur_stream, track);
+		rc = hls_muxer_init_track(state->cur_stream, track);
 		if (rc != VOD_OK)
 		{
 			return rc;
 		}
 	}
-	state->cur_clip++;
+	next_clip(state);
 
 	return VOD_OK;
 }
@@ -357,7 +382,7 @@ hls_muxer_choose_stream(hls_muxer_state_t* state, hls_muxer_stream_state_t** res
 			return VOD_OK;
 		}
 
-		if (state->cur_clip >= state->clips_end || has_frames)
+		if (state->cur_clip >= state->cur_seq->filtered_clips_end || has_frames)
 		{
 			break;
 		}
@@ -926,25 +951,12 @@ hls_muxer_simulation_reset(hls_muxer_state_t* state)
 
 	mpegts_encoder_simulated_start_segment(&state->queue);
 
-	if (state->clips_end > state->clips_start + 1)
+	for (cur_stream = state->first_stream; cur_stream < state->last_stream; cur_stream++)
 	{
-		state->cur_clip = state->clips_start;
-		rc = hls_muxer_reinit_tracks(state);
-		if (rc != VOD_OK)
-		{
-			vod_log_error(VOD_LOG_ERR, state->request_context->log, 0,
-				"hls_muxer_simulation_reset: unexpected - hls_muxer_reinit_tracks failed %i", rc);
-		}
-	}
-	else
-	{
-		for (cur_stream = state->first_stream; cur_stream < state->last_stream; cur_stream++)
-		{
-			cur_stream->cur_frame = cur_stream->first_frame;
-			cur_stream->cur_frame_offset = cur_stream->first_frame_offset;
-			cur_stream->next_frame_time_offset = cur_stream->first_frame_time_offset;
-			cur_stream->next_frame_dts = rescale_time(cur_stream->next_frame_time_offset, cur_stream->timescale, HLS_TIMESCALE);
-		}
+		cur_stream->cur_frame = cur_stream->first_frame;
+		cur_stream->cur_frame_offset = cur_stream->first_frame_offset;
+		cur_stream->next_frame_time_offset = cur_stream->first_frame_time_offset;
+		cur_stream->next_frame_dts = rescale_time(cur_stream->next_frame_time_offset, cur_stream->timescale, HLS_TIMESCALE);
 	}
 
 	state->cur_frame = NULL;

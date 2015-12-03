@@ -85,10 +85,6 @@ m3u8_builder_build_required_tracks_string(
 	{
 		result_size += vod_get_number_of_set_bits(request_params->tracks_mask[MEDIA_TYPE_AUDIO]) * (sizeof("-a32") - 1);
 	}
-	if (sequence_index != INVALID_SEQUENCE_INDEX)
-	{
-		result_size += sizeof("-f") - 1 + vod_get_int_print_len(sequence_index + 1);
-	}
 
 	p = vod_alloc(request_context->pool, result_size + 1);
 	if (p == NULL)
@@ -98,11 +94,6 @@ m3u8_builder_build_required_tracks_string(
 		return VOD_ALLOC_FAILED;
 	}
 	tracks_spec->data = p;
-
-	if (sequence_index != INVALID_SEQUENCE_INDEX)
-	{
-		p = vod_sprintf(p, "-f%uD", sequence_index + 1);
-	}
 
 	if (media_set->track_count[MEDIA_TYPE_VIDEO] != 0)
 	{
@@ -410,7 +401,6 @@ m3u8_builder_build_index_playlist(
 			sizeof(encryption_key_tag_part2) - 1 +
 			base_url->len +
 			conf->encryption_key_file_name.len + 
-			sizeof("-f") - 1 + VOD_INT32_LEN + 
 			sizeof(encryption_key_tag_part3) - 1;
 	}
 
@@ -445,10 +435,6 @@ m3u8_builder_build_index_playlist(
 		p = vod_copy(p, encryption_key_tag_part2, sizeof(encryption_key_tag_part2) - 1);
 		p = vod_copy(p, base_url->data, base_url->len);
 		p = vod_copy(p, conf->encryption_key_file_name.data, conf->encryption_key_file_name.len);
-		if (sequence_index != INVALID_SEQUENCE_INDEX)
-		{
-			p = vod_sprintf(p, "-f%uD", sequence_index + 1);
-		}
 		p = vod_copy(p, encryption_key_tag_part3, sizeof(encryption_key_tag_part3) - 1);
 	}
 
@@ -550,7 +536,7 @@ m3u8_builder_build_master_playlist(
 			}
 		}
 		result_size += conf->index_file_name_prefix.len;
-		result_size += sizeof("-f-v-a") - 1 + VOD_INT32_LEN * 3;
+		result_size += sizeof("-v-a") - 1 + VOD_INT32_LEN * 3;
 		result_size += sizeof(m3u8_url_suffix) - 1;
 	}
 
@@ -620,10 +606,6 @@ m3u8_builder_build_master_playlist(
 		}
 
 		p = vod_copy(p, conf->index_file_name_prefix.data, conf->index_file_name_prefix.len);
-		if (media_set->has_multi_sequences && sequence_index != INVALID_SEQUENCE_INDEX)
-		{
-			p = vod_sprintf(p, "-f%uD", cur_sequence->index + 1);
-		}
 
 		if (cur_sequence_tracks[MEDIA_TYPE_VIDEO] != NULL)
 		{
