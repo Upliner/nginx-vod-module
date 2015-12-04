@@ -84,18 +84,6 @@ hls_muxer_simulation_supported(
 	return TRUE;
 }
 
-bool_t next_clip(hls_muxer_state_t* state) {
-	if (state->cur_clip == state->cur_seq->filtered_clips_end)
-		return FALSE;
-	state->cur_clip++;
-	if (state->cur_clip == state->cur_seq->filtered_clips_end && state->cur_seq != state->seq_end)
-	{
-		state->cur_seq++;
-		state->cur_clip = state->cur_seq->filtered_clips;
-	}
-	return TRUE;
-}
-
 vod_status_t 
 hls_muxer_init(
 	hls_muxer_state_t* state, 
@@ -311,37 +299,12 @@ hls_muxer_init(
 		}
 	}
 
-	state->cur_seq = media_set->sequences;
-	state->seq_end = media_set->sequences_end - 1;
-	state->cur_clip = state->cur_seq->filtered_clips;
-	state->cur_stream = state->first_stream + (state->cur_clip->last_track - state->cur_clip->first_track);
-	next_clip(state);
-
 	mpegts_encoder_finalize_streams(&init_streams_state);
 
 	if (media_set->total_clip_count > 1)
 	{
 		state->video_duration = media_set->total_duration;
 	}
-
-	return VOD_OK;
-}
-
-static vod_status_t
-hls_muxer_reinit_tracks(hls_muxer_state_t* state)
-{
-	media_track_t* track;
-	vod_status_t rc;
-
-	for (track = state->cur_clip->first_track; track < state->cur_clip->last_track;  track++, state->cur_stream++)
-	{
-		rc = hls_muxer_init_track(state->cur_stream, track);
-		if (rc != VOD_OK)
-		{
-			return rc;
-		}
-	}
-	next_clip(state);
 
 	return VOD_OK;
 }
@@ -382,21 +345,7 @@ hls_muxer_choose_stream(hls_muxer_state_t* state, hls_muxer_stream_state_t** res
 			return VOD_OK;
 		}
 
-		if (state->cur_clip >= state->cur_seq->filtered_clips_end || has_frames)
-		{
-			break;
-		}
-
-		rc = hls_muxer_reinit_tracks(state);
-		if (rc != VOD_OK)
-		{
-			return rc;
-		}
-
-		if (state->use_discontinuity)
-		{
-			break;
-		}
+		break;
 	}
 
 	return VOD_NOT_FOUND;
