@@ -314,8 +314,6 @@ hls_muxer_choose_stream(hls_muxer_state_t* state, hls_muxer_stream_state_t** res
 {
 	hls_muxer_stream_state_t* cur_stream;
 	hls_muxer_stream_state_t* min_dts = NULL;
-	vod_status_t rc;
-	bool_t has_frames = FALSE;
 
 	for (;;)
 	{
@@ -325,8 +323,6 @@ hls_muxer_choose_stream(hls_muxer_state_t* state, hls_muxer_stream_state_t** res
 			{
 				continue;
 			}
-
-			has_frames = TRUE;
 
 			if (cur_stream->next_frame_time_offset >= cur_stream->segment_limit)
 			{
@@ -896,7 +892,6 @@ void
 hls_muxer_simulation_reset(hls_muxer_state_t* state)
 {
 	hls_muxer_stream_state_t* cur_stream;
-	vod_status_t rc;
 
 	mpegts_encoder_simulated_start_segment(&state->queue);
 

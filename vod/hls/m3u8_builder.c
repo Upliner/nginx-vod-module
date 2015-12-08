@@ -501,7 +501,6 @@ m3u8_builder_build_master_playlist(
 	media_track_t* track;
 	media_info_t* video;
 	media_info_t* audio = NULL;
-	uint32_t sequence_index;
 	uint32_t bitrate;
 	u_char* p;
 	size_t max_video_stream_inf;
@@ -588,7 +587,6 @@ m3u8_builder_build_master_playlist(
 		p = vod_copy(p, m3u8_stream_inf_suffix, sizeof(m3u8_stream_inf_suffix) - 1);
 
 		// write the track url
-		sequence_index = cur_sequence->index;
 		if (base_url->len != 0)
 		{
 			// absolute url only
@@ -596,7 +594,6 @@ m3u8_builder_build_master_playlist(
 			if (track->file_info.uri.len != 0)
 			{
 				p = vod_copy(p, track->file_info.uri.data, track->file_info.uri.len);
-				sequence_index = INVALID_SEQUENCE_INDEX;		// no need to pass the sequence index since we have a direct uri
 			}
 			else
 			{
